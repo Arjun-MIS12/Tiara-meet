@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Family Call</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+<style>
+  :root {
+    --bg: #12151c;
+    --panel: #1b1f29;
+    --accent: #5eead4;
+    --accent-dim: #2b3a38;
+    --text: #e9edf1;
+    --text-dim: #8b93a1;
+    --danger: #f16565;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  header {
+    width: 100%;
+    padding: 18px 20px 8px;
+    text-align: center;
+  }
+  header h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  header p {
+    margin: 4px 0 0;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  #setup {
+    width: 100%;
+    max-width: 380px;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .field label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .field input {
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid #2a2f3b;
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    border: none;
+    border-radius: 10px;
+    padding: 13px 16px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #joinBtn {
+    background: var(--accent);
+    color: #0b1210;
+    margin-top: 6px;
+  }
+  #joinBtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .hint {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  #status {
+    font-size: 0.85rem;
+    color: var(--accent);
+    min-height: 18px;
+    text-align: center;
+  }
+  #status.err { color: var(--danger); }
+
+  #callScreen {
+    display: none;
+    width: 100%;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 12px 20px;
+  }
+  .video-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    aspect-ratio: 4 / 3;
+    background: #000;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px #262b36;
+  }
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  #remoteVideo { background: #05070a; }
+  #localVideo {
+    position: absolute;
+    width: 30%;
+    max-width: 130px;
+    bottom: 12px;
+    right: 12px;
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    border: 2px solid var(--bg);
+  }
+  #placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .ctrl-btn {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid #2a2f3b;
+    color: var(--text);
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ctrl-btn.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+  }
+  #endBtn { background: var(--danger); border: none; color: white; }
+
+  footer {
+    padding: 10px;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Family Video Call</h1>
+  <p>Just a simple, private way to see each other</p>
+</header>
+
+<div id="setup">
+  <div class="field">
+    <label for="roomInput">Room code (make one up, share it with the other person)</label>
+    <input id="roomInput" type="text" placeholder="e.g. maya-priya-call" autocomplete="off" />
+  </div>
+  <button id="generateBtn" type="button" style="background:var(--panel); color:var(--text); border:1px solid #2a2f3b;">Create Room Code</button>
+  <button id="joinBtn">Join Call</button>
+  <div id="status"></div>
+  <div class="hint">
+    Both people open this same page in Chrome and type the exact same room code.
+    Whoever joins first waits a moment for the other person. No account or download needed —
+    your browser will ask for camera and microphone permission the first time.
+  </div>
+</div>
+
+<div id="callScreen">
+  <div class="video-wrap">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <div id="placeholder">Waiting for the other person to join…</div>
+    <video id="localVideo" autoplay playsinline muted></video>
+  </div>
+  <div class="controls">
+    <button class="ctrl-btn" id="micBtn" title="Mute/unmute">🎤</button>
+    <button class="ctrl-btn" id="camBtn" title="Camera on/off">📷</button>
+    <button class="ctrl-btn" id="endBtn" title="End call">✕</button>
+  </div>
+</div>
+
+<footer>Peer-to-peer video — nothing is recorded or stored on any server.</footer>
+
+<script>
+let peer, localStream, currentCall;
+let micOn = true, camOn = true;
+
+const setupEl = document.getElementById('setup');
+const callScreenEl = document.getElementById('callScreen');
+const statusEl = document.getElementById('status');
+const joinBtn = document.getElementById('joinBtn');
+const roomInput = document.getElementById('roomInput');
+const localVideo = document.getElementById('localVideo');
+const remoteVideo = document.getElementById('remoteVideo');
+const placeholder = document.getElementById('placeholder');
+
+function setStatus(msg, isErr) {
+  statusEl.textContent = msg;
+  statusEl.className = isErr ? 'err' : '';
+}
+
+function roomToPeerId(room) {
+  // Deterministic pair of IDs from the room code so either person can be "host"
+  return 'famcall-' + room.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+}
+
+async function startCall() {
+  const room = roomInput.value.trim();
+  if (!room) {
+    setStatus('Please enter a room code.', true);
+    return;
+  }
+  joinBtn.disabled = true;
+  setStatus('Getting camera ready…');
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  } catch (e) {
+    setStatus('Camera/microphone permission is needed. Please allow it and try again.', true);
+    joinBtn.disabled = false;
+    return;
+  }
+
+  localVideo.srcObject = localStream;
+  setupEl.style.display = 'none';
+  callScreenEl.style.display = 'flex';
+
+  const baseId = roomToPeerId(room);
+  setStatus('Connecting…');
+
+  // Try to become the "A" peer; if taken, become "B" and call A.
+  tryConnect(baseId + '-a', baseId + '-b');
+}
+
+function tryConnect(myId, otherId) {
+  peer = new Peer(myId, { debug: 0 });
+
+  peer.on('open', () => {
+    setStatus('Waiting for the other person…');
+    // Also try calling the other slot in case they're already there
+    attemptCall(otherId);
+  });
+
+  peer.on('call', (call) => {
+    call.answer(localStream);
+    handleCall(call);
+  });
+
+  peer.on('error', (err) => {
+    if (err.type === 'unavailable-id') {
+      // Someone is already the "A" peer — become "B"
+      tryConnect(otherId, myId);
+    } else if (err.type === 'peer-unavailable') {
+      // Other side not there yet, keep waiting silently
+    } else {
+      console.error(err);
+    }
+  });
+}
+
+function attemptCall(otherId) {
+  const call = peer.call(otherId, localStream);
+  if (call) handleCall(call);
+  // Retry in case the other person joins a bit later
+  setTimeout(() => {
+    if (!currentCall) attemptCall(otherId);
+  }, 3000);
+}
+
+function handleCall(call) {
+  currentCall = call;
+  call.on('stream', (remoteStream) => {
+    remoteVideo.srcObject = remoteStream;
+    placeholder.style.display = 'none';
+    setStatus('Connected', false);
+  });
+  call.on('close', endUI);
+  call.on('error', endUI);
+}
+
+function endCall() {
+  if (currentCall) currentCall.close();
+  if (peer) peer.destroy();
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  endUI();
+}
+
+function endUI() {
+  callScreenEl.style.display = 'none';
+  setupEl.style.display = 'flex';
+  joinBtn.disabled = false;
+  placeholder.style.display = 'flex';
+  setStatus('');
+}
+
+document.getElementById('micBtn').onclick = () => {
+  micOn = !micOn;
+  localStream.getAudioTracks().forEach(t => t.enabled = micOn);
+  document.getElementById('micBtn').classList.toggle('active', !micOn);
+};
+document.getElementById('camBtn').onclick = () => {
+  camOn = !camOn;
+  localStream.getVideoTracks().forEach(t => t.enabled = camOn);
+  document.getElementById('camBtn').classList.toggle('active', !camOn);
+};
+document.getElementById('endBtn').onclick = endCall;
+
+const words = ['sunny','happy','blue','tiger','maple','coral','swift','gentle','bright','calm','amber','lucky'];
+document.getElementById('generateBtn').onclick = () => {
+  const w = words[Math.floor(Math.random() * words.length)];
+  const n = Math.floor(100 + Math.random() * 900);
+  const code = w + '-' + n;
+  roomInput.value = code;
+  setStatus('Code created: ' + code + ' — share this with the other person, then press Join Call.', false);
+};
+
+joinBtn.onclick = startCall;
+roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startCall(); });
+
+// If the link has ?room=something, pre-fill it and auto-join
+const params = new URLSearchParams(window.location.search);
+const presetRoom = params.get('room');
+if (presetRoom) {
+  roomInput.value = presetRoom;
+  setStatus('Joining "' + presetRoom + '"…');
+  startCall();
+}
+</script>
+
+</body>
+</html>
