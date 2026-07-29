@@ -108,44 +108,42 @@
     align-items: center;
     padding: 0 12px 20px;
   }
-  #videoGrid {
-    width: 100%;
-    max-width: 720px;
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-  }
-  .video-tile {
+  .video-wrap {
     position: relative;
-    background: #000;
-    border-radius: 14px;
-    overflow: hidden;
+    width: 100%;
+    max-width: 520px;
     aspect-ratio: 4 / 3;
+    background: #000;
+    border-radius: 16px;
+    overflow: hidden;
     box-shadow: 0 0 0 1px #262b36;
   }
-  .video-tile video {
+  video {
     width: 100%;
     height: 100%;
     object-fit: cover;
   }
-  .video-tile.local video { transform: scaleX(-1); }
-  .video-tile .label {
+  #remoteVideo { background: #05070a; }
+  #localVideo {
     position: absolute;
-    bottom: 6px;
-    left: 8px;
-    font-size: 0.72rem;
-    color: var(--text-dim);
-    background: rgba(0,0,0,0.4);
-    padding: 2px 8px;
-    border-radius: 6px;
+    width: 30%;
+    max-width: 130px;
+    bottom: 12px;
+    right: 12px;
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    border: 2px solid var(--bg);
   }
   #placeholder {
-    width: 100%;
-    max-width: 720px;
-    text-align: center;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-dim);
     font-size: 0.9rem;
-    padding: 30px 20px;
+    text-align: center;
+    padding: 20px;
   }
 
   .controls {
@@ -183,32 +181,30 @@
 
 <header>
   <h1>Family Video Call</h1>
-  <p>Just a simple, private way to see each other &mdash; up to 4 people</p>
+  <p>Just a simple, private way to see each other</p>
 </header>
 
 <div id="setup">
   <div class="field">
-    <label for="roomInput">Room code (make one up, share it with everyone)</label>
+    <label for="roomInput">Room code (make one up, share it with the other person)</label>
     <input id="roomInput" type="text" placeholder="e.g. maya-priya-call" autocomplete="off" />
   </div>
   <button id="generateBtn" type="button" style="background:var(--panel); color:var(--text); border:1px solid #2a2f3b;">Create Room Code</button>
   <button id="joinBtn">Join Call</button>
   <div id="status"></div>
   <div class="hint">
-    Everyone opens this same page in Chrome and types the exact same room code.
-    Up to 4 people can join one room. No account or download needed &mdash;
+    Both people open this same page in Chrome and type the exact same room code.
+    Whoever joins first waits a moment for the other person. No account or download needed —
     your browser will ask for camera and microphone permission the first time.
   </div>
 </div>
 
 <div id="callScreen">
-  <div id="videoGrid">
-    <div class="video-tile local">
-      <video id="localVideo" autoplay playsinline muted></video>
-      <div class="label">You</div>
-    </div>
+  <div class="video-wrap">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <div id="placeholder">Waiting for the other person to join…</div>
+    <video id="localVideo" autoplay playsinline muted></video>
   </div>
-  <div id="placeholder">Waiting for others to join…</div>
   <div class="controls">
     <button class="ctrl-btn" id="micBtn" title="Mute/unmute">🎤</button>
     <button class="ctrl-btn" id="camBtn" title="Camera on/off">📷</button>
@@ -216,13 +212,11 @@
   </div>
 </div>
 
-<footer>Peer-to-peer video &mdash; nothing is recorded or stored on any server.</footer>
+<footer>Peer-to-peer video — nothing is recorded or stored on any server.</footer>
 
 <script>
-const MAX_SLOTS = 4;
-let peer, localStream, mySlot, baseId;
+let peer, localStream, currentCall;
 let micOn = true, camOn = true;
-const activeCalls = {}; // peerId -> call
 
 const setupEl = document.getElementById('setup');
 const callScreenEl = document.getElementById('callScreen');
@@ -230,7 +224,7 @@ const statusEl = document.getElementById('status');
 const joinBtn = document.getElementById('joinBtn');
 const roomInput = document.getElementById('roomInput');
 const localVideo = document.getElementById('localVideo');
-const videoGrid = document.getElementById('videoGrid');
+const remoteVideo = document.getElementById('remoteVideo');
 const placeholder = document.getElementById('placeholder');
 
 function setStatus(msg, isErr) {
@@ -238,12 +232,9 @@ function setStatus(msg, isErr) {
   statusEl.className = isErr ? 'err' : '';
 }
 
-function roomToBaseId(room) {
+function roomToPeerId(room) {
+  // Deterministic pair of IDs from the room code so either person can be "host"
   return 'famcall-' + room.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-}
-
-function slotId(slot) {
-  return baseId + '-' + slot;
 }
 
 async function startCall() {
@@ -267,26 +258,20 @@ async function startCall() {
   setupEl.style.display = 'none';
   callScreenEl.style.display = 'flex';
 
-  baseId = roomToBaseId(room);
+  const baseId = roomToPeerId(room);
   setStatus('Connecting…');
 
-  claimSlot(1);
+  // Try to become the "A" peer; if taken, become "B" and call A.
+  tryConnect(baseId + '-a', baseId + '-b');
 }
 
-function claimSlot(slot) {
-  if (slot > MAX_SLOTS) {
-    setStatus('This room already has ' + MAX_SLOTS + ' people. Please try a different room code.', true);
-    return;
-  }
-  peer = new Peer(slotId(slot), { debug: 0 });
+function tryConnect(myId, otherId) {
+  peer = new Peer(myId, { debug: 0 });
 
   peer.on('open', () => {
-    mySlot = slot;
-    setStatus('Waiting for others…');
-    // Try connecting to every other possible slot
-    for (let i = 1; i <= MAX_SLOTS; i++) {
-      if (i !== mySlot) attemptCall(slotId(i));
-    }
+    setStatus('Waiting for the other person…');
+    // Also try calling the other slot in case they're already there
+    attemptCall(otherId);
   });
 
   peer.on('call', (call) => {
@@ -296,68 +281,38 @@ function claimSlot(slot) {
 
   peer.on('error', (err) => {
     if (err.type === 'unavailable-id') {
-      claimSlot(slot + 1);
+      // Someone is already the "A" peer — become "B"
+      tryConnect(otherId, myId);
     } else if (err.type === 'peer-unavailable') {
-      // that slot isn't taken yet, ignore
+      // Other side not there yet, keep waiting silently
     } else {
       console.error(err);
     }
   });
 }
 
-function attemptCall(otherId, attemptsLeft) {
-  if (attemptsLeft === undefined) attemptsLeft = 5;
-  if (activeCalls[otherId] || attemptsLeft <= 0) return;
+function attemptCall(otherId) {
   const call = peer.call(otherId, localStream);
   if (call) handleCall(call);
+  // Retry in case the other person joins a bit later
   setTimeout(() => {
-    if (!activeCalls[otherId]) attemptCall(otherId, attemptsLeft - 1);
+    if (!currentCall) attemptCall(otherId);
   }, 3000);
 }
 
 function handleCall(call) {
-  const peerId = call.peer;
-  if (activeCalls[peerId]) return;
-  activeCalls[peerId] = call;
-
+  currentCall = call;
   call.on('stream', (remoteStream) => {
-    addVideoTile(peerId, remoteStream);
+    remoteVideo.srcObject = remoteStream;
     placeholder.style.display = 'none';
     setStatus('Connected', false);
   });
-  call.on('close', () => removePeer(peerId));
-  call.on('error', () => removePeer(peerId));
-}
-
-function addVideoTile(peerId, stream) {
-  if (document.getElementById('tile-' + peerId)) return;
-  const tile = document.createElement('div');
-  tile.className = 'video-tile';
-  tile.id = 'tile-' + peerId;
-  const video = document.createElement('video');
-  video.autoplay = true;
-  video.playsInline = true;
-  video.srcObject = stream;
-  const label = document.createElement('div');
-  label.className = 'label';
-  label.textContent = 'Family';
-  tile.appendChild(video);
-  tile.appendChild(label);
-  videoGrid.appendChild(tile);
-}
-
-function removePeer(peerId) {
-  delete activeCalls[peerId];
-  const tile = document.getElementById('tile-' + peerId);
-  if (tile) tile.remove();
-  if (Object.keys(activeCalls).length === 0) {
-    placeholder.style.display = 'block';
-    setStatus('Waiting for others…');
-  }
+  call.on('close', endUI);
+  call.on('error', endUI);
 }
 
 function endCall() {
-  Object.values(activeCalls).forEach(c => c.close());
+  if (currentCall) currentCall.close();
   if (peer) peer.destroy();
   if (localStream) localStream.getTracks().forEach(t => t.stop());
   endUI();
@@ -367,8 +322,7 @@ function endUI() {
   callScreenEl.style.display = 'none';
   setupEl.style.display = 'flex';
   joinBtn.disabled = false;
-  document.querySelectorAll('.video-tile:not(.local)').forEach(t => t.remove());
-  placeholder.style.display = 'block';
+  placeholder.style.display = 'flex';
   setStatus('');
 }
 
@@ -390,12 +344,13 @@ document.getElementById('generateBtn').onclick = () => {
   const n = Math.floor(100 + Math.random() * 900);
   const code = w + '-' + n;
   roomInput.value = code;
-  setStatus('Code created: ' + code + ' — share this with everyone joining, then press Join Call.', false);
+  setStatus('Code created: ' + code + ' — share this with the other person, then press Join Call.', false);
 };
 
 joinBtn.onclick = startCall;
 roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startCall(); });
 
+// If the link has ?room=something, pre-fill it and auto-join
 const params = new URLSearchParams(window.location.search);
 const presetRoom = params.get('room');
 if (presetRoom) {
