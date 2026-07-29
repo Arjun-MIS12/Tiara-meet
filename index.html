@@ -341,6 +341,7 @@ function addVideoTile(peerId, stream) {
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
+  video.setAttribute('playsinline', ''); // some mobile browsers need the attribute form too
   video.srcObject = stream;
   const label = document.createElement('div');
   label.className = 'label';
@@ -348,6 +349,19 @@ function addVideoTile(peerId, stream) {
   tile.appendChild(video);
   tile.appendChild(label);
   videoGrid.appendChild(tile);
+
+  // Some mobile browsers won't auto-play a video element added after the
+  // page load, even with autoplay set — force it and show a tap-to-view
+  // fallback if the browser still refuses.
+  video.play().catch(() => {
+    const tapOverlay = document.createElement('button');
+    tapOverlay.textContent = 'Tap to view';
+    tapOverlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:rgba(0,0,0,0.5);color:#fff;border:none;font-size:0.9rem;cursor:pointer;';
+    tapOverlay.onclick = () => {
+      video.play().then(() => tapOverlay.remove()).catch(() => {});
+    };
+    tile.appendChild(tapOverlay);
+  });
 }
 
 function removePeer(peerId) {
