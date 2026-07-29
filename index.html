@@ -272,6 +272,11 @@ async function startCall() {
   baseId = roomToBaseId(room);
   setStatus('Connecting…');
 
+  // Ask for notification permission upfront (works even if tab is in background)
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
   claimSlot(1);
 }
 
@@ -307,6 +312,34 @@ function claimSlot(slot) {
   });
 }
 
+function notifyJoin() {
+  // Short ring tone generated in-browser — no audio file needed.
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const playBeep = (startTime, freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.15, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.3);
+      osc.start(startTime);
+      osc.stop(startTime + 0.3);
+    };
+    const now = ctx.currentTime;
+    playBeep(now, 880);
+    playBeep(now + 0.35, 1046);
+  } catch (e) { /* audio not available, skip silently */ }
+
+  // On-screen browser notification (shows even if tab is in background/minimized)
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification('Family Video Call', { body: 'Someone just joined the call', silent: true });
+    } catch (e) { /* ignore */ }
+  }
+}
+
 function attemptCall(otherId, attemptsLeft) {
   if (attemptsLeft === undefined) attemptsLeft = 20;
   if (activeCalls[otherId] || attemptsLeft <= 0) return;
@@ -323,10 +356,12 @@ function handleCall(call) {
   call.on('stream', (remoteStream) => {
     // Only mark as connected once a stream actually arrives — this prevents
     // an earlier failed outgoing attempt from blocking a later real connection.
+    const isNewJoin = !activeCalls[peerId];
     activeCalls[peerId] = call;
     addVideoTile(peerId, remoteStream);
     placeholder.style.display = 'none';
     setStatus('Connected', false);
+    if (isNewJoin) notifyJoin();
   });
   call.on('close', () => removePeer(peerId));
   call.on('error', () => {
