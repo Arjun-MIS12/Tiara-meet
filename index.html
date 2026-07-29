@@ -206,6 +206,7 @@
     <div class="video-tile local mirrored">
       <video id="localVideo" autoplay playsinline muted></video>
       <div class="label">You</div>
+      <div id="camOffLabel" style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; background:rgba(0,0,0,0.7); font-size:0.85rem;">Your camera is off</div>
     </div>
   </div>
   <div id="placeholder">Waiting for others to join…</div>
@@ -393,13 +394,16 @@ function endUI() {
 document.getElementById('micBtn').onclick = () => {
   micOn = !micOn;
   localStream.getAudioTracks().forEach(t => t.enabled = micOn);
-  document.getElementById('micBtn').classList.toggle('active', !micOn);
+  document.getElementById('micBtn').classList.toggle('active', micOn);
 };
+document.getElementById('micBtn').classList.add('active');
 document.getElementById('camBtn').onclick = () => {
   camOn = !camOn;
   localStream.getVideoTracks().forEach(t => t.enabled = camOn);
-  document.getElementById('camBtn').classList.toggle('active', !camOn);
+  document.getElementById('camBtn').classList.toggle('active', camOn);
+  document.getElementById('camOffLabel').style.display = camOn ? 'none' : 'flex';
 };
+document.getElementById('camBtn').classList.add('active');
 document.getElementById('endBtn').onclick = endCall;
 
 let usingFrontCamera = true;
