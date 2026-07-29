@@ -42,6 +42,7 @@
     font-size: 0.85rem;
     color: var(--text-dim);
   }
+
   #setup {
     width: 100%;
     max-width: 380px;
@@ -98,6 +99,7 @@
     text-align: center;
   }
   #status.err { color: var(--danger); }
+
   #callScreen {
     display: none;
     width: 100%;
@@ -145,19 +147,20 @@
     font-size: 0.9rem;
     padding: 30px 20px;
   }
+
   .controls {
     display: flex;
     gap: 14px;
     margin-top: 18px;
   }
   .ctrl-btn {
-    width: 62px;
+    width: 54px;
     height: 54px;
-    border-radius: 999px;
+    border-radius: 50%;
     background: var(--panel);
     border: 1px solid #2a2f3b;
     color: var(--text);
-    font-size: 0.92rem;
+    font-size: 1.2rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -167,6 +170,7 @@
     border-color: var(--accent);
   }
   #endBtn { background: var(--danger); border: none; color: white; }
+
   footer {
     padding: 10px;
     font-size: 0.72rem;
@@ -204,11 +208,11 @@
       <div class="label">You</div>
     </div>
   </div>
-  <div id="placeholder">Waiting for others to join...</div>
+  <div id="placeholder">Waiting for others to join…</div>
   <div class="controls">
-    <button class="ctrl-btn" id="micBtn" title="Mute/unmute">Mic</button>
-    <button class="ctrl-btn" id="camBtn" title="Camera on/off">Cam</button>
-    <button class="ctrl-btn" id="endBtn" title="End call">End</button>
+    <button class="ctrl-btn" id="micBtn" title="Mute/unmute">🎤</button>
+    <button class="ctrl-btn" id="camBtn" title="Camera on/off">📷</button>
+    <button class="ctrl-btn" id="endBtn" title="End call">✕</button>
   </div>
 </div>
 
@@ -216,14 +220,9 @@
 
 <script>
 const MAX_SLOTS = 4;
-let peer = null;
-let localStream = null;
-let mySlot = null;
-let baseId = '';
-let micOn = true;
-let camOn = true;
-let retryTimer = null;
-const activeCalls = {};
+let peer, localStream, mySlot, baseId;
+let micOn = true, camOn = true;
+const activeCalls = {}; // peerId -> call
 
 const setupEl = document.getElementById('setup');
 const callScreenEl = document.getElementById('callScreen');
@@ -233,8 +232,6 @@ const roomInput = document.getElementById('roomInput');
 const localVideo = document.getElementById('localVideo');
 const videoGrid = document.getElementById('videoGrid');
 const placeholder = document.getElementById('placeholder');
-const micBtn = document.getElementById('micBtn');
-const camBtn = document.getElementById('camBtn');
 
 function setStatus(msg, isErr) {
   statusEl.textContent = msg;
@@ -249,64 +246,18 @@ function slotId(slot) {
   return baseId + '-' + slot;
 }
 
-function stopDialLoop() {
-  if (retryTimer) {
-    clearInterval(retryTimer);
-    retryTimer = null;
-  }
-}
-
-function closeAllCalls() {
-  Object.values(activeCalls).forEach(call => {
-    try {
-      call.close();
-    } catch (err) {
-      console.error(err);
-    }
-  });
-  Object.keys(activeCalls).forEach(peerId => delete activeCalls[peerId]);
-}
-
-function cleanupPeerState() {
-  stopDialLoop();
-  closeAllCalls();
-  if (peer) {
-    peer.destroy();
-    peer = null;
-  }
-  mySlot = null;
-  baseId = '';
-}
-
-function stopLocalMedia() {
-  if (!localStream) return;
-  localStream.getTracks().forEach(track => track.stop());
-  localStream = null;
-}
-
-function resetControls() {
-  micOn = true;
-  camOn = true;
-  micBtn.classList.remove('active');
-  camBtn.classList.remove('active');
-}
-
 async function startCall() {
   const room = roomInput.value.trim();
   if (!room) {
     setStatus('Please enter a room code.', true);
     return;
   }
-
-  cleanupPeerState();
-  stopLocalMedia();
-  resetControls();
   joinBtn.disabled = true;
-  setStatus('Getting camera ready...');
+  setStatus('Getting camera ready…');
 
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  } catch (err) {
+  } catch (e) {
     setStatus('Camera/microphone permission is needed. Please allow it and try again.', true);
     joinBtn.disabled = false;
     return;
@@ -315,109 +266,84 @@ async function startCall() {
   localVideo.srcObject = localStream;
   setupEl.style.display = 'none';
   callScreenEl.style.display = 'flex';
-  placeholder.style.display = 'block';
 
   baseId = roomToBaseId(room);
-  setStatus('Connecting...');
+  setStatus('Connecting…');
+
   claimSlot(1);
 }
 
 function claimSlot(slot) {
   if (slot > MAX_SLOTS) {
-    stopLocalMedia();
     setStatus('This room already has ' + MAX_SLOTS + ' people. Please try a different room code.', true);
-    endUI(true);
     return;
-  }
-
-  if (peer) {
-    peer.destroy();
   }
   peer = new Peer(slotId(slot), { debug: 0 });
 
   peer.on('open', () => {
     mySlot = slot;
-    setStatus('Waiting for others...');
-    startDialLoop();
+    setStatus('Waiting for others…');
+    // Try connecting to every other possible slot
+    for (let i = 1; i <= MAX_SLOTS; i++) {
+      if (i !== mySlot) attemptCall(slotId(i));
+    }
   });
 
-  peer.on('call', call => {
+  peer.on('call', (call) => {
     call.answer(localStream);
     handleCall(call);
   });
 
-  peer.on('error', err => {
+  peer.on('error', (err) => {
     if (err.type === 'unavailable-id') {
       claimSlot(slot + 1);
-      return;
+    } else if (err.type === 'peer-unavailable') {
+      // that slot isn't taken yet, ignore
+    } else {
+      console.error(err);
     }
-    if (err.type === 'peer-unavailable') {
-      return;
-    }
-    console.error(err);
-    setStatus('Connection problem. Please refresh both devices and try again.', true);
-  });
-
-  peer.on('disconnected', () => {
-    setStatus('Connection dropped. Trying to reconnect...', true);
   });
 }
 
-function startDialLoop() {
-  stopDialLoop();
-  dialAllSlots();
-  retryTimer = setInterval(dialAllSlots, 3000);
-}
-
-function dialAllSlots() {
-  if (!peer || peer.destroyed || !localStream || !mySlot) return;
-  for (let i = 1; i <= MAX_SLOTS; i++) {
-    if (i !== mySlot) {
-      attemptCall(slotId(i));
-    }
-  }
-}
-
-function attemptCall(otherId) {
-  if (!peer || peer.destroyed || activeCalls[otherId]) return;
+function attemptCall(otherId, attemptsLeft) {
+  if (attemptsLeft === undefined) attemptsLeft = 20;
+  if (activeCalls[otherId] || attemptsLeft <= 0) return;
   const call = peer.call(otherId, localStream);
   if (call) handleCall(call);
+  setTimeout(() => {
+    if (!activeCalls[otherId]) attemptCall(otherId, attemptsLeft - 1);
+  }, 3000);
 }
 
 function handleCall(call) {
   const peerId = call.peer;
-  if (activeCalls[peerId]) {
-    call.close();
-    return;
-  }
-  activeCalls[peerId] = call;
 
-  call.on('stream', remoteStream => {
+  call.on('stream', (remoteStream) => {
+    // Only mark as connected once a stream actually arrives — this prevents
+    // an earlier failed outgoing attempt from blocking a later real connection.
+    activeCalls[peerId] = call;
     addVideoTile(peerId, remoteStream);
     placeholder.style.display = 'none';
     setStatus('Connected', false);
   });
-
   call.on('close', () => removePeer(peerId));
-  call.on('error', () => removePeer(peerId));
+  call.on('error', () => {
+    if (activeCalls[peerId] === call) removePeer(peerId);
+  });
 }
 
 function addVideoTile(peerId, stream) {
   if (document.getElementById('tile-' + peerId)) return;
-
   const tile = document.createElement('div');
   tile.className = 'video-tile';
   tile.id = 'tile-' + peerId;
-
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
   video.srcObject = stream;
-
   const label = document.createElement('div');
   label.className = 'label';
   label.textContent = 'Family';
-
   tile.appendChild(video);
   tile.appendChild(label);
   videoGrid.appendChild(tile);
@@ -429,67 +355,55 @@ function removePeer(peerId) {
   if (tile) tile.remove();
   if (Object.keys(activeCalls).length === 0) {
     placeholder.style.display = 'block';
-    setStatus('Waiting for others...');
+    setStatus('Waiting for others…');
   }
 }
 
 function endCall() {
-  cleanupPeerState();
-  stopLocalMedia();
-  endUI(false);
+  Object.values(activeCalls).forEach(c => c.close());
+  if (peer) peer.destroy();
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  endUI();
 }
 
-function endUI(keepStatus) {
+function endUI() {
   callScreenEl.style.display = 'none';
   setupEl.style.display = 'flex';
   joinBtn.disabled = false;
-  document.querySelectorAll('.video-tile:not(.local)').forEach(tile => tile.remove());
+  document.querySelectorAll('.video-tile:not(.local)').forEach(t => t.remove());
   placeholder.style.display = 'block';
-  localVideo.srcObject = null;
-  if (!keepStatus) {
-    setStatus('');
-  }
+  setStatus('');
 }
 
-micBtn.onclick = () => {
-  if (!localStream) return;
+document.getElementById('micBtn').onclick = () => {
   micOn = !micOn;
-  localStream.getAudioTracks().forEach(track => {
-    track.enabled = micOn;
-  });
-  micBtn.classList.toggle('active', !micOn);
+  localStream.getAudioTracks().forEach(t => t.enabled = micOn);
+  document.getElementById('micBtn').classList.toggle('active', !micOn);
 };
-
-camBtn.onclick = () => {
-  if (!localStream) return;
+document.getElementById('camBtn').onclick = () => {
   camOn = !camOn;
-  localStream.getVideoTracks().forEach(track => {
-    track.enabled = camOn;
-  });
-  camBtn.classList.toggle('active', !camOn);
+  localStream.getVideoTracks().forEach(t => t.enabled = camOn);
+  document.getElementById('camBtn').classList.toggle('active', !camOn);
 };
-
 document.getElementById('endBtn').onclick = endCall;
 
-const words = ['sunny', 'happy', 'blue', 'tiger', 'maple', 'coral', 'swift', 'gentle', 'bright', 'calm', 'amber', 'lucky'];
+const words = ['sunny','happy','blue','tiger','maple','coral','swift','gentle','bright','calm','amber','lucky'];
 document.getElementById('generateBtn').onclick = () => {
   const w = words[Math.floor(Math.random() * words.length)];
   const n = Math.floor(100 + Math.random() * 900);
   const code = w + '-' + n;
   roomInput.value = code;
-  setStatus('Code created: ' + code + ' - share this with everyone joining, then press Join Call.', false);
+  setStatus('Code created: ' + code + ' — share this with everyone joining, then press Join Call.', false);
 };
 
 joinBtn.onclick = startCall;
-roomInput.addEventListener('keydown', event => {
-  if (event.key === 'Enter') startCall();
-});
+roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startCall(); });
 
 const params = new URLSearchParams(window.location.search);
 const presetRoom = params.get('room');
 if (presetRoom) {
   roomInput.value = presetRoom;
-  setStatus('Joining "' + presetRoom + '"...');
+  setStatus('Joining "' + presetRoom + '"…');
   startCall();
 }
 </script>
