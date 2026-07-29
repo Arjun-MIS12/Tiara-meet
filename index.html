@@ -128,7 +128,7 @@
     height: 100%;
     object-fit: cover;
   }
-  .video-tile.local video { transform: scaleX(-1); }
+  .video-tile.local.mirrored video { transform: scaleX(-1); }
   .video-tile .label {
     position: absolute;
     bottom: 6px;
@@ -203,7 +203,7 @@
 
 <div id="callScreen">
   <div id="videoGrid">
-    <div class="video-tile local">
+    <div class="video-tile local mirrored">
       <video id="localVideo" autoplay playsinline muted></video>
       <div class="label">You</div>
     </div>
@@ -212,6 +212,7 @@
   <div class="controls">
     <button class="ctrl-btn" id="micBtn" title="Mute/unmute">🎤</button>
     <button class="ctrl-btn" id="camBtn" title="Camera on/off">📷</button>
+    <button class="ctrl-btn" id="flipBtn" title="Switch camera">🔄</button>
     <button class="ctrl-btn" id="endBtn" title="End call">✕</button>
   </div>
 </div>
@@ -386,6 +387,41 @@ document.getElementById('camBtn').onclick = () => {
   document.getElementById('camBtn').classList.toggle('active', !camOn);
 };
 document.getElementById('endBtn').onclick = endCall;
+
+let usingFrontCamera = true;
+document.getElementById('flipBtn').onclick = async () => {
+  const flipBtn = document.getElementById('flipBtn');
+  flipBtn.disabled = true;
+  try {
+    usingFrontCamera = !usingFrontCamera;
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: usingFrontCamera ? 'user' : 'environment' },
+      audio: false
+    });
+    const newTrack = newStream.getVideoTracks()[0];
+    const oldTrack = localStream.getVideoTracks()[0];
+
+    // Swap the track in every active call so others see the new camera
+    Object.values(activeCalls).forEach(call => {
+      const sender = call.peerConnection &&
+        call.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (sender) sender.replaceTrack(newTrack);
+    });
+
+    // Swap in our own local preview + stream object
+    localStream.removeTrack(oldTrack);
+    oldTrack.stop();
+    localStream.addTrack(newTrack);
+    localVideo.srcObject = localStream;
+
+    // Mirror only the front camera, not the back one
+    document.querySelector('.video-tile.local').classList.toggle('mirrored', usingFrontCamera);
+  } catch (e) {
+    setStatus('Could not switch camera on this device.', true);
+    usingFrontCamera = !usingFrontCamera; // revert flag
+  }
+  flipBtn.disabled = false;
+};
 
 const words = ['sunny','happy','blue','tiger','maple','coral','swift','gentle','bright','calm','amber','lucky'];
 document.getElementById('generateBtn').onclick = () => {
